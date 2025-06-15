@@ -54,22 +54,53 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
 
+      - name: Install Pulumi CLI
+        run: |
+          curl -fsSL https://get.pulumi.com | sh
+          echo "$HOME/.pulumi/bin" >> $GITHUB_PATH
+
       - name: Install Pulumi dependencies
         run: |
-          uv sync --frozen
+          uv sync --frozen --no-install-project
+
+      - name: Activate virtual environment
+        run: |
+          echo "VIRTUAL_ENV=$PWD/.venv" >> $GITHUB_ENV
+          echo "$PWD/.venv/bin" >> $GITHUB_PATH
+        working-directory: ./infrastructure
 
       - name: Configure Pulumi
-        uses: pulumi/actions@v5
-        with:
-          command: whoami
-          work-dir: ./infrastructure
+        run: |
+          pulumi version
+          pulumi whoami
+        working-directory: ./infrastructure
         env:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+
+      - name: Parse Azure Credentials
+        run: |
+          echo "ARM_CLIENT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientId)" >> $GITHUB_ENV
+          echo "ARM_CLIENT_SECRET=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientSecret)" >> $GITHUB_ENV
+          echo "ARM_SUBSCRIPTION_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .subscriptionId)" >> $GITHUB_ENV
+          echo "ARM_TENANT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .tenantId)" >> $GITHUB_ENV
 
       - name: Azure CLI Login
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Initialize Pulumi Stack (PR)
+        if: github.event_name == 'pull_request'
+        run: |
+          pulumi stack select dev --create
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+          ARM_USE_CLI: false
+          ARM_USE_MSI: false
+          ARM_CLIENT_ID: ${{ env.ARM_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ env.ARM_CLIENT_SECRET }}
+          ARM_SUBSCRIPTION_ID: ${{ env.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ env.ARM_TENANT_ID }}
 
       - name: Pulumi Preview (PR)
         if: github.event_name == 'pull_request'
@@ -80,6 +111,19 @@ jobs:
           work-dir: ./infrastructure
           comment-on-pr: true
           github-token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+          ARM_USE_CLI: false
+          ARM_USE_MSI: false
+          ARM_CLIENT_ID: ${{ env.ARM_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ env.ARM_CLIENT_SECRET }}
+          ARM_SUBSCRIPTION_ID: ${{ env.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ env.ARM_TENANT_ID }}
+
+      - name: Initialize Pulumi Stack (Manual Preview)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'preview'
+        run: |
+          pulumi stack select ${{ github.event.inputs.stack }} --create
         env:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
 
@@ -93,6 +137,13 @@ jobs:
         env:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
 
+      - name: Initialize Pulumi Stack (Main Branch)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          pulumi stack select dev --create
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+
       - name: Pulumi Up (Main Branch)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: pulumi/actions@v5
@@ -100,6 +151,13 @@ jobs:
           command: up
           stack-name: dev
           work-dir: ./infrastructure
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+
+      - name: Initialize Pulumi Stack (Manual Up)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'up'
+        run: |
+          pulumi stack select ${{ github.event.inputs.stack }} --create
         env:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
 
